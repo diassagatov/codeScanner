@@ -11,17 +11,16 @@ class PromoCodeScanner {
     this.overlayText = document.getElementById("overlayText");
 
     this.startBtn = document.getElementById("startBtn");
+    this.captureBtn = document.getElementById("captureBtn");
     this.retryBtn = document.getElementById("retryBtn");
     this.doneBtn = document.getElementById("doneBtn");
 
-    if (!this.video || !this.canvas || !this.startBtn) {
+    if (!this.video || !this.canvas || !this.startBtn || !this.captureBtn) {
       throw new Error("Не найдены необходимые элементы на странице");
     }
 
     this.ctx = this.canvas.getContext("2d");
     this.stream = null;
-    this.scanning = false;
-    this.scanInterval = null;
     this.recognizedCode = "";
 
     this.init();
@@ -29,6 +28,7 @@ class PromoCodeScanner {
 
   init() {
     this.startBtn.addEventListener("click", () => this.startCamera());
+    this.captureBtn.addEventListener("click", () => this.captureAndAnalyze());
     this.retryBtn.addEventListener("click", () => this.retry());
     this.doneBtn.addEventListener("click", () => this.done());
   }
@@ -103,14 +103,16 @@ class PromoCodeScanner {
       });
 
       this.startBtn.style.display = "none";
-      this.retryBtn.style.display = "inline-block";
+      this.captureBtn.style.display = "inline-block";
+      this.retryBtn.style.display = "none";
       this.doneBtn.style.display = "inline-block";
       this.resultContainer.style.display = "none";
 
-      this.updateStatus("Камера запущена", "success");
+      this.updateStatus(
+        "Камера запущена. Наведите на промокод и нажмите 'Сфотографировать'",
+        "success"
+      );
       this.overlayText.textContent = "Наведите камеру на промокод";
-
-      this.startScanning();
     } catch (error) {
       console.error("Ошибка доступа к камере:", error);
       let errorMessage = "Ошибка доступа к камере. ";
@@ -140,45 +142,32 @@ class PromoCodeScanner {
     }
   }
 
-  startScanning() {
-    if (this.scanning) return;
-
-    this.scanning = true;
-    this.updateStatus("Сканирование...", "scanning");
-    this.overlayText.textContent = "Сканирование...";
-
-    // Сканируем каждую секунду для более частого распознавания
-    this.scanInterval = setInterval(() => {
-      this.scanCode();
-    }, 1000);
-
-    // Первое сканирование через 1 секунду (даем камере сфокусироваться)
-    setTimeout(() => {
-      this.scanCode();
-    }, 1000);
-  }
-
-  stopScanning() {
-    this.scanning = false;
-    if (this.scanInterval) {
-      clearInterval(this.scanInterval);
-      this.scanInterval = null;
+  async captureAndAnalyze() {
+    if (!this.video.videoWidth) {
+      this.updateStatus("Камера еще не готова. Подождите немного.", "error");
+      return;
     }
-  }
-
-  async scanCode() {
-    if (!this.scanning || !this.video.videoWidth) return;
 
     try {
+      // Отключаем кнопку на время анализа
+      this.captureBtn.disabled = true;
+      this.updateStatus("Анализ изображения...", "scanning");
+      this.overlayText.textContent = "Анализ...";
+
       // Получаем координаты зоны сканирования
       const scanRect = this.getScanZoneRect();
 
       // Убеждаемся, что размеры валидны
       if (scanRect.width <= 0 || scanRect.height <= 0) {
+        this.updateStatus(
+          "Ошибка: неверные размеры зоны сканирования",
+          "error"
+        );
+        this.captureBtn.disabled = false;
         return;
       }
 
-      // Рисуем текущий кадр на canvas
+      // Рисуем текущий кадр на canvas (делаем снимок)
       this.ctx.drawImage(
         this.video,
         0,
@@ -236,10 +225,24 @@ class PromoCodeScanner {
         this.displayResult(this.recognizedCode);
         this.updateStatus("Код распознан!", "success");
         this.overlayText.textContent = "Код распознан!";
-        this.stopScanning();
+
+        // Скрываем кнопку "Сфотографировать", показываем "Повторить"
+        this.captureBtn.style.display = "none";
+        this.retryBtn.style.display = "inline-block";
+      } else {
+        this.updateStatus(
+          "Не удалось распознать код. Попробуйте еще раз.",
+          "error"
+        );
+        this.overlayText.textContent = "Код не распознан";
       }
+
+      this.captureBtn.disabled = false;
     } catch (error) {
-      console.error("Ошибка сканирования:", error);
+      console.error("Ошибка анализа:", error);
+      this.updateStatus("Ошибка при анализе изображения", "error");
+      this.overlayText.textContent = "Ошибка";
+      this.captureBtn.disabled = false;
     }
   }
 
@@ -478,17 +481,18 @@ class PromoCodeScanner {
   }
 
   retry() {
-    this.stopScanning();
     this.resultContainer.style.display = "none";
     this.recognizedCode = "";
-    this.updateStatus("", "");
+    this.updateStatus(
+      "Камера запущена. Наведите на промокод и нажмите 'Сфотографировать'",
+      "success"
+    );
     this.overlayText.textContent = "Наведите камеру на промокод";
-    this.startScanning();
+    this.captureBtn.style.display = "inline-block";
+    this.retryBtn.style.display = "none";
   }
 
   done() {
-    this.stopScanning();
-
     if (this.stream) {
       this.stream.getTracks().forEach((track) => track.stop());
       this.stream = null;
@@ -497,6 +501,7 @@ class PromoCodeScanner {
     this.video.srcObject = null;
 
     this.startBtn.style.display = "inline-block";
+    this.captureBtn.style.display = "none";
     this.retryBtn.style.display = "none";
     this.doneBtn.style.display = "none";
 
@@ -507,6 +512,7 @@ class PromoCodeScanner {
     }
 
     this.overlayText.textContent = "";
+    this.resultContainer.style.display = "none";
   }
 }
 
