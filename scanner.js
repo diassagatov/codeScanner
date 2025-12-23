@@ -1,9 +1,9 @@
 // Модуль для сканирования промокодов
 class PromoCodeScanner {
     constructor() {
+        // Проверяем наличие всех необходимых элементов
         this.video = document.getElementById('video');
         this.canvas = document.getElementById('canvas');
-        this.ctx = this.canvas.getContext('2d');
         this.scanZone = document.getElementById('scanZone');
         this.resultCode = document.getElementById('resultCode');
         this.resultContainer = document.getElementById('resultContainer');
@@ -14,6 +14,11 @@ class PromoCodeScanner {
         this.retryBtn = document.getElementById('retryBtn');
         this.doneBtn = document.getElementById('doneBtn');
         
+        if (!this.video || !this.canvas || !this.startBtn) {
+            throw new Error('Не найдены необходимые элементы на странице');
+        }
+        
+        this.ctx = this.canvas.getContext('2d');
         this.stream = null;
         this.scanning = false;
         this.scanInterval = null;
@@ -30,12 +35,26 @@ class PromoCodeScanner {
     
     async startCamera() {
         try {
-            this.updateStatus('Запуск камеры...', 'scanning');
-            this.overlayText.textContent = 'Наведите камеру на промокод';
+            // Проверяем безопасный контекст (HTTPS или localhost)
+            const isSecureContext = window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+            if (!isSecureContext) {
+                throw new Error('Для работы камеры требуется HTTPS или localhost. Откройте сайт через https:// или запустите локальный сервер.');
+            }
+            
+            // Проверяем поддержку getUserMedia
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error('Ваш браузер не поддерживает доступ к камере. Используйте современный браузер (Chrome, Firefox, Safari, Edge).');
+            }
+            
+            this.updateStatus('Запрос доступа к камере...', 'scanning');
+            this.overlayText.textContent = 'Разрешите доступ к камере';
+            
+            // Отключаем кнопку на время запроса
+            this.startBtn.disabled = true;
             
             const constraints = {
                 video: {
-                    facingMode: 'environment', // задняя камера
+                    facingMode: { ideal: 'environment' }, // задняя камера
                     width: { ideal: 1280 },
                     height: { ideal: 720 }
                 }
@@ -44,15 +63,35 @@ class PromoCodeScanner {
             this.stream = await navigator.mediaDevices.getUserMedia(constraints);
             this.video.srcObject = this.stream;
             
+            // Ждем, пока видео начнет воспроизводиться
+            this.video.onloadedmetadata = () => {
+                this.canvas.width = this.video.videoWidth;
+                this.canvas.height = this.video.videoHeight;
+            };
+            
             await this.video.play();
             
-            // Ждем загрузки видео
-            await new Promise(resolve => {
-                this.video.onloadedmetadata = () => {
-                    this.canvas.width = this.video.videoWidth;
-                    this.canvas.height = this.video.videoHeight;
+            // Ждем загрузки метаданных
+            await new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    reject(new Error('Таймаут загрузки видео'));
+                }, 5000);
+                
+                if (this.video.readyState >= 2) {
+                    clearTimeout(timeout);
                     resolve();
-                };
+                } else {
+                    this.video.onloadedmetadata = () => {
+                        clearTimeout(timeout);
+                        this.canvas.width = this.video.videoWidth;
+                        this.canvas.height = this.video.videoHeight;
+                        resolve();
+                    };
+                    this.video.onerror = () => {
+                        clearTimeout(timeout);
+                        reject(new Error('Ошибка загрузки видео'));
+                    };
+                }
             });
             
             this.startBtn.style.display = 'none';
@@ -60,11 +99,28 @@ class PromoCodeScanner {
             this.doneBtn.style.display = 'inline-block';
             this.resultContainer.style.display = 'none';
             
+            this.updateStatus('Камера запущена', 'success');
+            this.overlayText.textContent = 'Наведите камеру на промокод';
+            
             this.startScanning();
             
         } catch (error) {
             console.error('Ошибка доступа к камере:', error);
-            this.updateStatus('Ошибка доступа к камере. Проверьте разрешения.', 'error');
+            let errorMessage = 'Ошибка доступа к камере. ';
+            
+            if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                errorMessage += 'Разрешите доступ к камере в настройках браузера.';
+            } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+                errorMessage += 'Камера не найдена.';
+            } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+                errorMessage += 'Камера уже используется другим приложением.';
+            } else {
+                errorMessage += error.message || 'Проверьте настройки браузера.';
+            }
+            
+            this.updateStatus(errorMessage, 'error');
+            this.overlayText.textContent = 'Ошибка';
+            this.startBtn.disabled = false;
         }
     }
     
@@ -295,8 +351,13 @@ class PromoCodeScanner {
     }
 }
 
-// Экспортируем функцию для использования
-export function scanPromoCode(videoStream) {
+// Экспортируем функцию для использования (если используется как модуль)
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { scanPromoCode, PromoCodeScanner };
+}
+
+// Глобальная функция для использования
+window.scanPromoCode = function scanPromoCode(videoStream) {
     return new Promise(async (resolve, reject) => {
         try {
             const canvas = document.createElement('canvas');
@@ -325,7 +386,7 @@ export function scanPromoCode(videoStream) {
             reject(error);
         }
     });
-}
+};
 
 function enhanceImageForOCR(imageData) {
     const data = new Uint8ClampedArray(imageData.data);
@@ -356,7 +417,27 @@ function cleanTextForPromoCode(text) {
 }
 
 // Инициализация при загрузке страницы
-document.addEventListener('DOMContentLoaded', () => {
-    new PromoCodeScanner();
-});
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        initScanner();
+    });
+} else {
+    initScanner();
+}
+
+function initScanner() {
+    try {
+        console.log('Инициализация сканера промокодов...');
+        const scanner = new PromoCodeScanner();
+        window.scanner = scanner; // Для отладки
+        console.log('Сканер успешно инициализирован');
+    } catch (error) {
+        console.error('Ошибка инициализации сканера:', error);
+        const status = document.getElementById('status');
+        if (status) {
+            status.textContent = 'Ошибка инициализации. Проверьте консоль браузера (F12).';
+            status.className = 'status error';
+        }
+    }
+}
 
