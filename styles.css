@@ -63,8 +63,8 @@ h1 {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: 85%;
-    height: 35%;
+    width: 70%;
+    height: 25%;
     border: 3px solid #00ff00;
     border-radius: 10px;
     pointer-events: none;
@@ -73,8 +73,8 @@ h1 {
 
 @media (max-width: 480px) {
     .scan-zone {
-        width: 90%;
-        height: 40%;
+        width: 75%;
+        height: 28%;
         border-width: 2px;
     }
 }

@@ -148,12 +148,17 @@ class PromoCodeScanner {
       return;
     }
 
-    try {
-      // Отключаем кнопку на время анализа
-      this.captureBtn.disabled = true;
-      this.updateStatus("Анализ изображения...", "scanning");
-      this.overlayText.textContent = "Анализ...";
+    // Предотвращаем множественные нажатия
+    if (this.captureBtn.disabled) {
+      return;
+    }
 
+    // Отключаем кнопку на время анализа
+    this.captureBtn.disabled = true;
+    this.updateStatus("Анализ изображения...", "scanning");
+    this.overlayText.textContent = "Анализ...";
+
+    try {
       // Получаем координаты зоны сканирования
       const scanRect = this.getScanZoneRect();
 
@@ -195,19 +200,67 @@ class PromoCodeScanner {
       const variants = this.createEnhancedVariants(imageData);
       const results = [];
 
-      for (const enhancedImageData of variants) {
-        // Создаем временный canvas для обработки
-        const tempCanvas = document.createElement("canvas");
-        tempCanvas.width = width;
-        tempCanvas.height = height;
-        const tempCtx = tempCanvas.getContext("2d");
-        tempCtx.putImageData(enhancedImageData, 0, 0);
+      // Ограничиваем время анализа (максимум 25 секунд на все варианты)
+      let analysisTimeout;
+      const timeoutPromise = new Promise((resolve) => {
+        analysisTimeout = setTimeout(() => {
+          resolve("timeout");
+        }, 25000);
+      });
 
-        // Распознаем текст
-        const result = await this.recognizeText(tempCanvas);
-        if (result && result.trim().length > 0) {
-          results.push(result.trim());
+      try {
+        // Пробуем варианты последовательно, останавливаемся при первом хорошем результате
+        for (let i = 0; i < variants.length; i++) {
+          const enhancedImageData = variants[i];
+          this.updateStatus(
+            `Анализ изображения... (${i + 1}/${variants.length})`,
+            "scanning"
+          );
+
+          // Создаем временный canvas для обработки
+          const tempCanvas = document.createElement("canvas");
+          tempCanvas.width = width;
+          tempCanvas.height = height;
+          const tempCtx = tempCanvas.getContext("2d");
+          tempCtx.putImageData(enhancedImageData, 0, 0);
+
+          // Распознаем текст с таймаутом для каждого варианта
+          try {
+            const result = await Promise.race([
+              this.recognizeText(tempCanvas),
+              timeoutPromise.then(() => {
+                throw new Error("Общий таймаут анализа");
+              }),
+            ]);
+
+            if (result && result.trim().length > 0) {
+              results.push(result.trim());
+              // Если получили хороший результат, можно попробовать еще один вариант для подтверждения
+              if (results.length >= 1 && i < variants.length - 1) {
+                // Продолжаем, но если уже есть результат, можем остановиться раньше
+              }
+            }
+          } catch (err) {
+            if (err.message === "Общий таймаут анализа") {
+              throw err; // Пробрасываем общий таймаут
+            }
+            console.warn(`Ошибка распознавания варианта ${i + 1}:`, err);
+            // Продолжаем с следующим вариантом
+          }
         }
+      } catch (timeoutError) {
+        if (timeoutError.message === "Общий таймаут анализа") {
+          this.updateStatus(
+            "Анализ занимает слишком много времени. Попробуйте еще раз.",
+            "error"
+          );
+          this.overlayText.textContent = "Таймаут";
+          this.captureBtn.disabled = false;
+          return;
+        }
+        throw timeoutError;
+      } finally {
+        clearTimeout(analysisTimeout);
       }
 
       // Выбираем наиболее частый результат или первый валидный
@@ -229,15 +282,15 @@ class PromoCodeScanner {
         // Скрываем кнопку "Сфотографировать", показываем "Повторить"
         this.captureBtn.style.display = "none";
         this.retryBtn.style.display = "inline-block";
+        this.captureBtn.disabled = false;
       } else {
         this.updateStatus(
           "Не удалось распознать код. Попробуйте еще раз.",
           "error"
         );
         this.overlayText.textContent = "Код не распознан";
+        this.captureBtn.disabled = false;
       }
-
-      this.captureBtn.disabled = false;
     } catch (error) {
       console.error("Ошибка анализа:", error);
       this.updateStatus("Ошибка при анализе изображения", "error");
@@ -348,13 +401,13 @@ class PromoCodeScanner {
   async recognizeText(canvas) {
     try {
       // Увеличиваем размер canvas для лучшего распознавания
-      const scale = 4; // Увеличил для лучшего распознавания
+      const scale = 4;
       const scaledCanvas = document.createElement("canvas");
       scaledCanvas.width = canvas.width * scale;
       scaledCanvas.height = canvas.height * scale;
       const scaledCtx = scaledCanvas.getContext("2d");
 
-      // Используем сглаживание для лучшего качества
+      // Отключаем сглаживание для четкости
       scaledCtx.imageSmoothingEnabled = false;
       scaledCtx.drawImage(
         canvas,
@@ -364,49 +417,59 @@ class PromoCodeScanner {
         scaledCanvas.height
       );
 
-      // Пробуем несколько вариантов распознавания с разными настройками
-      const recognitionPromises = [
-        // Вариант 1: Автоматическая сегментация, все символы
-        this.recognizeWithSettings(scaledCanvas, {
-          tessedit_pageseg_mode: "3", // Полностью автоматическая сегментация
-          tessedit_ocr_engine_mode: "1", // LSTM OCR Engine
-        }),
-        // Вариант 2: Одна строка, все символы
-        this.recognizeWithSettings(scaledCanvas, {
-          tessedit_pageseg_mode: "8", // Одна строка текста
+      // Пробуем варианты распознавания последовательно с таймаутом
+      const recognitionOptions = [
+        // Вариант 1: Одна строка, все символы (самый быстрый и точный для промокодов)
+        {
+          tessedit_pageseg_mode: "8",
           tessedit_ocr_engine_mode: "1",
-        }),
-        // Вариант 3: Один блок текста
-        this.recognizeWithSettings(scaledCanvas, {
-          tessedit_pageseg_mode: "6", // Один блок текста
+        },
+        // Вариант 2: Автоматическая сегментация
+        {
+          tessedit_pageseg_mode: "3",
           tessedit_ocr_engine_mode: "1",
-        }),
-        // Вариант 4: Только буквы и цифры (на случай если это поможет)
-        this.recognizeWithSettings(scaledCanvas, {
+        },
+        // Вариант 3: Только буквы и цифры
+        {
           tessedit_pageseg_mode: "8",
           tessedit_ocr_engine_mode: "1",
           tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-        }),
+        },
       ];
 
-      // Ждем все варианты и выбираем лучший
-      const results = await Promise.allSettled(recognitionPromises);
       let bestResult = "";
       let bestConfidence = 0;
 
-      for (const result of results) {
-        if (result.status === "fulfilled" && result.value) {
-          const { text, confidence } = result.value;
-          const cleaned = this.cleanText(text);
-          if (cleaned.length >= 3 && confidence > bestConfidence) {
-            bestResult = cleaned;
-            bestConfidence = confidence;
+      // Пробуем варианты последовательно, останавливаемся при первом хорошем результате
+      for (const settings of recognitionOptions) {
+        try {
+          const result = await Promise.race([
+            this.recognizeWithSettings(scaledCanvas, settings),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error("Таймаут")), 8000)
+            ),
+          ]);
+
+          if (result && result.text) {
+            const cleaned = this.cleanText(result.text);
+            if (cleaned.length >= 2 && result.confidence > bestConfidence) {
+              bestResult = cleaned;
+              bestConfidence = result.confidence;
+
+              // Если уверенность высокая, возвращаем сразу
+              if (result.confidence > 50) {
+                return bestResult;
+              }
+            }
           }
+        } catch (err) {
+          console.warn("Ошибка варианта распознавания:", err);
+          // Продолжаем со следующим вариантом
         }
       }
 
-      // Если нашли результат с уверенностью > 20, возвращаем его
-      if (bestConfidence > 20 && bestResult.length >= 3) {
+      // Возвращаем лучший результат, если уверенность > 15
+      if (bestConfidence > 15 && bestResult.length >= 2) {
         return bestResult;
       }
 
