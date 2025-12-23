@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Сканер промокодов</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Сканер промокодов</h1>
+        
+        <div class="camera-container">
+            <video id="video" autoplay playsinline></video>
+            <canvas id="canvas" style="display: none;"></canvas>
+            <div class="scan-zone" id="scanZone">
+                <div class="scan-corner top-left"></div>
+                <div class="scan-corner top-right"></div>
+                <div class="scan-corner bottom-left"></div>
+                <div class="scan-corner bottom-right"></div>
+            </div>
+            <div class="overlay-text" id="overlayText">Наведите камеру на промокод</div>
+        </div>
+
+        <div class="result-container" id="resultContainer" style="display: none;">
+            <div class="result-label">Распознанный код:</div>
+            <div class="result-code" id="resultCode"></div>
+        </div>
+
+        <div class="controls">
+            <button id="startBtn" class="btn btn-primary">Начать сканирование</button>
+            <button id="retryBtn" class="btn btn-secondary" style="display: none;">Повторить</button>
+            <button id="doneBtn" class="btn btn-success" style="display: none;">Готово</button>
+        </div>
+
+        <div class="status" id="status"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
+    <script type="module" src="scanner.js"></script>
+</body>
+</html>
+
